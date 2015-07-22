@@ -1,0 +1,108 @@
+---
+title: "Practical Machine Learning Project"
+output: html_document
+---
+## Acknowledgment 
+
+The data set comes from **Groupware@LES**, at <http://groupware.les.inf.puc-rio.br/har>. Analyses are also informed by the following paper:  
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. *Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human ’13).* Stuttgart, Germany: ACM SIGCHI, 2013.
+
+
+## Load and prepare the training and testing datasets
+
+In this project, "unusable variables" are defined as those that (1) are near zero covariates (with little varibility), and (2) have missing values for more than 80% of observations.
+
+```{r}
+# load datasets
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile="pml-training.csv", method= "wget")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile="pml-test.csv", method= "wget")
+train <- read.csv("pml-training.csv", row.names = 1)
+test <- read.csv("pml-test.csv", row.names = 1)
+# identify and remove unusable variables (near zero covariates)
+library("caret")
+nsv <- nearZeroVar(train, saveMetrics = T)
+train <- train[,!nsv$nzv]
+test <- test[,!nsv$nzv]
+# identify and remove unusable variables (>80% missing values)
+missingV <- as.logical(rep(TRUE, ncol(train)))
+for (i in 1:ncol(train)) {
+        n <-0
+        for (j in 1:nrow(train)) {
+                if (is.na(train[j,i]) | train[j,i]=="") n <- n+1
+        }
+        if (n > 0.8 * nrow(train)) missingV[i] <- FALSE
+}
+train <- train[,missingV]; train <- train[,-c(1:5)]
+test <- test[,missingV]; test <- test[,-c(1:5)]
+```
+
+Potential predictors shall come from the following:
+```{r}
+names(train)
+```
+
+## Train models using Random Forests.
+
+As this data is clearly non-linear, linear model prodictions such as regression cannot be used. It tends to overfit, so cross-validation is very important to increase accuracy. In particular, K-fold cross-validation technique is used. K is set to be 5, for a relatively smaller out-of-sample error rate. Three different models will be fitted to the training dataset:
+
+1. Classification Tree, for its better performance in nonlinear settings.
+2. Random Forests, as one of the top performing algorithms in predicting contests. 
+3. Linear Discriminary Analsysis, which assumes data to follow a probabilistic model and uses Bayes' theorem to identify optimal classifiers.
+
+```{r}
+# Split the dataset into a 70% training and 30% testing datasets
+set.seed(12345)
+inTrain <- createDataPartition(y=train$classe, p=0.7, list=FALSE)
+fortraining <- train[inTrain, ]
+fortesting <- train[-inTrain, ]
+# Use k-fold cross-validation and set k to be 5
+k_fold5 <- trainControl(method="cv", number=5)
+# Apply Random Forests
+library(randomForest)
+library(rpart)
+set.seed(12345)
+modFit1 <- train(classe ~ ., method="rpart", trControl = k_fold5, data=fortraining)
+set.seed(12345)
+modFit2 <- train(classe ~ ., method="rf", trControl = k_fold5, data=fortraining)
+set.seed(12345)
+modFit3<- train(classe ~ ., method="lda", trControl = k_fold5, data=fortraining)
+```
+
+## Evaluate Model Fits
+
+**1. Classification Tree** model give a poor fit, as first of all, actual class D is scattered in what is predicted as A, B, and C. The accuracy rate of the model is only about 49.63%.
+
+```{r}
+library(rattle); library(rpart)
+fancyRpartPlot(modFit1$finalModel)
+ClassificationT <- predict(modFit1, newdata = fortesting[,-53])
+confusionMatrix(fortesting$classe, ClassificationT)
+```
+
+**2. Random Forests** performs at best when 2 variables are randomly sampled determine each split (with the highest accuracy of 99.14%), which will be chosen. Accuracy SD is not high, which means these classes are easily separable. The confusion matrix shows the overall accuracy of this model to be an outstanding 98.9%. If this model is used, the out-of-sample error would be 1.1%.   
+
+```{r}
+modFit2
+RandomF <- predict(modFit2, newdata=fortesting[,-53])
+confusionMatrix(fortesting$classe, RandomF)
+```
+
+**3. Lineary Discriminant Analysis** performs better than Classification Tree on this data, but is not as good as Random Forests. Its overall accuracy is 69.62%. 
+
+```{r}
+modFit3
+LinearDA <- predict(modFit3, newdata=fortesting[,-53])
+confusionMatrix(fortesting$classe, LinearDA)
+```
+
+## Select Best Model for Final Prediction: Random Forests
+
+Our Random Forests model's overall accuracy is 98.9% with 5 folds cross validation, which means that after aplitting the sample in a stratified manner 5 times for model training, this model prediction expects an out-of-sample error rate of 1.1%.
+
+Apply the above Random Forests model to fit the original testing dataset. The predictions are:
+
+```{r}
+set.seed(12345)
+predict(modFit2, newdata=test)
+```
+
